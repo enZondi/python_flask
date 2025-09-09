@@ -1,110 +1,94 @@
-# python_files/apex_api.py
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import python_files.apex as apex_client  # your existing Python client
+# python_files/apex.py
 import requests
+import qrcode
+from datetime import datetime
 
-app = Flask(__name__)
-CORS(app)  # allow cross-origin requests
-
-# -----------------------------
-# Config
-# -----------------------------
-REQUEST_TIMEOUT = 10  # seconds
+BASE_URL = "https://oracleapex.com/ords/mrelokusa"
+TIMEOUT = 10  # seconds
 
 # -----------------------------
-# Employee Login
+# Authentication
 # -----------------------------
-@app.route("/login", methods=["POST"])
-def login():
-    data = request.json
-    if not data or "employee_code" not in data or "password" not in data:
-        return jsonify({"error": "Missing employee_code or password"}), 400
+def login_employee(employee_code: str, password: str) -> str:
+    """Login with employee_code and password; returns JWT token"""
+    url = f"{BASE_URL}/employee/login"
+    payload = {"employee_code": employee_code, "password": password}
     try:
-        token = apex_client.login_employee(data["employee_code"], data["password"])
-        return jsonify({"token": token})
+        r = requests.post(url, json=payload, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()["token"]
+    except requests.exceptions.Timeout:
+        raise RuntimeError("APEX server timed out")
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 502
+        raise RuntimeError(f"APEX request failed: {e}")
     except KeyError:
-        return jsonify({"error": "Invalid response from APEX"}), 502
+        raise RuntimeError("APEX response missing token")
 
-@app.route("/login/qr", methods=["POST"])
-def login_qr():
-    data = request.json
-    if not data or "qr_code" not in data:
-        return jsonify({"error": "Missing qr_code"}), 400
+def login_employee_qr(qr_code: str) -> str:
+    """Login via QR code; returns JWT token"""
+    url = f"{BASE_URL}/employee/login/qr"
+    payload = {"qr_code": qr_code}
     try:
-        token = apex_client.login_employee_qr(data["qr_code"])
-        return jsonify({"token": token})
+        r = requests.post(url, json=payload, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()["token"]
+    except requests.exceptions.Timeout:
+        raise RuntimeError("APEX server timed out")
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 502
+        raise RuntimeError(f"APEX request failed: {e}")
     except KeyError:
-        return jsonify({"error": "Invalid response from APEX"}), 502
+        raise RuntimeError("APEX response missing token")
 
 # -----------------------------
 # Bookings
 # -----------------------------
-@app.route("/bookings/active", methods=["GET"])
-def get_bookings():
+def get_bookings() -> list:
+    url = f"{BASE_URL}/employee/bookings/active"
     try:
-        bookings = apex_client.get_bookings()
-        return jsonify(bookings)
+        r = requests.get(url, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.Timeout:
+        raise RuntimeError("APEX server timed out")
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 502
+        raise RuntimeError(f"APEX request failed: {e}")
 
-@app.route("/checkout", methods=["POST"])
-def checkout():
-    data = request.json
-    required_fields = ["employee_id", "equipment_id", "quantity_booked", "due_date", "admin_id", "notes"]
-    if not all(field in data for field in required_fields):
-        return jsonify({"error": f"Missing fields, required: {required_fields}"}), 400
+def checkout_booking(employee_id, equipment_id, quantity, due_date, admin_id, notes):
+    url = f"{BASE_URL}/admin/checkout"
+    payload = {
+        "employee_id": employee_id,
+        "equipment_id": equipment_id,
+        "quantity_booked": quantity,
+        "due_date": due_date,
+        "admin_id": admin_id,
+        "notes": notes
+    }
     try:
-        result = apex_client.checkout_booking(
-            data["employee_id"],
-            data["equipment_id"],
-            data["quantity_booked"],
-            data["due_date"],
-            data["admin_id"],
-            data["notes"]
-        )
-        return jsonify(result)
+        r = requests.post(url, json=payload, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.Timeout:
+        raise RuntimeError("APEX server timed out")
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 502
+        raise RuntimeError(f"APEX request failed: {e}")
 
-@app.route("/checkin", methods=["PUT"])
-def checkin():
-    data = request.json
-    if not data or "booking_id" not in data:
-        return jsonify({"error": "Missing booking_id"}), 400
+def checkin_booking(booking_id):
+    url = f"{BASE_URL}/employee/checkin"
+    payload = {"booking_id": booking_id}
     try:
-        result = apex_client.checkin_booking(data["booking_id"])
-        return jsonify(result)
+        r = requests.put(url, json=payload, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.Timeout:
+        raise RuntimeError("APEX server timed out")
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 502
+        raise RuntimeError(f"APEX request failed: {e}")
 
 # -----------------------------
 # QR Code Generation
 # -----------------------------
-@app.route("/generate_qr", methods=["POST"])
-def generate_qr():
-    data = request.json
-    if not data or "value" not in data or "filename" not in data:
-        return jsonify({"error": "Missing value or filename"}), 400
-    try:
-        path = apex_client.save_qr_image(data["value"], data["filename"])
-        return jsonify({"path": path})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# -----------------------------
-# Health Check
-# -----------------------------
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"}), 200
-
-# -----------------------------
-# Main
-# -----------------------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=True)
+def save_qr_image(value: str, filename: str) -> str:
+    img = qrcode.make(value)
+    path = f"{filename}.png"
+    img.save(path)
+    return path
