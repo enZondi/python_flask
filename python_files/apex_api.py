@@ -1,85 +1,62 @@
-# python_files/apex_api.py
 from flask import Flask, request, jsonify
-import requests
-import apex  # your apex.py module
+from python_files import apex  # relative import
 
 app = Flask(__name__)
-apex_client = apex  # your existing apex.py functions
 
 @app.route("/login", methods=["POST"])
 def login():
-    """Employee login via APEX REST API"""
-    data = request.json
-    try:
-        token = apex_client.login_employee(data["employee_code"], data["password"])
-        return jsonify({"token": token})
-    except requests.exceptions.RequestException as e:
-        # Catch HTTP errors from APEX
-        return jsonify({"error": str(e)}), 502
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    data = request.get_json()
+    employee_code = data.get("employee_code")
+    password = data.get("password")
+    if not employee_code or not password:
+        return jsonify({"error": "employee_code and password required"}), 400
 
-@app.route("/login/qr", methods=["POST"])
-def login_qr():
-    """Employee login via QR code"""
-    data = request.json
     try:
-        token = apex_client.login_employee_qr(data["qr_code"])
+        token = apex.login_employee(employee_code, password)
         return jsonify({"token": token})
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 502
+    except requests.exceptions.HTTPError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Login failed"}), 500
+
+@app.route("/login_qr", methods=["POST"])
+def login_qr():
+    data = request.get_json()
+    qr_code = data.get("qr_code")
+    if not qr_code:
+        return jsonify({"error": "qr_code required"}), 400
+
+    try:
+        token = apex.login_employee_qr(qr_code)
+        return jsonify({"token": token})
+    except requests.exceptions.HTTPError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": "QR Login failed"}), 500
 
 @app.route("/bookings", methods=["GET"])
-def get_bookings():
-    """Fetch bookings via APEX REST API"""
+def bookings():
+    token = request.headers.get("Authorization")
+    if not token:
+        return jsonify({"error": "Authorization header required"}), 401
+    token = token.replace("Bearer ", "")
     try:
-        bookings = apex_client.get_bookings()
-        return jsonify(bookings)
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 502
+        data = apex.get_bookings(token)
+        return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/checkout", methods=["POST"])
-def checkout_booking():
-    """Admin checkout booking via APEX REST API"""
-    data = request.json
+@app.route("/bookings/<int:booking_id>/checkout", methods=["POST"])
+def checkout(booking_id):
+    token = request.headers.get("Authorization")
+    if not token:
+        return jsonify({"error": "Authorization header required"}), 401
+    token = token.replace("Bearer ", "")
     try:
-        result = apex_client.checkout_booking(
-            data["employee_id"],
-            data["equipment_id"],
-            data["quantity"],
-            data["due_date"],
-            data["admin_id"],
-            data.get("notes", "")
-        )
-        return jsonify(result)
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 502
+        data = apex.checkout_booking(token, booking_id)
+        return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-@app.route("/checkin", methods=["PUT"])
-def checkin_booking():
-    """Employee checkin booking via APEX REST API"""
-    data = request.json
-    try:
-        result = apex_client.checkin_booking(data["booking_id"])
-        return jsonify(result)
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 502
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# Optional health check
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    # Render expects this to bind on 0.0.0.0:$PORT
-    import os
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=10000)
