@@ -1,94 +1,85 @@
-# python_files/apex.py
+# python_files/apex_api.py
+from flask import Flask, request, jsonify
 import requests
-import qrcode
-from datetime import datetime
+import apex  # your apex.py module
 
-BASE_URL = "https://oracleapex.com/ords/mrelokusa"
-TIMEOUT = 10  # seconds
+app = Flask(__name__)
+apex_client = apex  # your existing apex.py functions
 
-# -----------------------------
-# Authentication
-# -----------------------------
-def login_employee(employee_code: str, password: str) -> str:
-    """Login with employee_code and password; returns JWT token"""
-    url = f"{BASE_URL}/employee/login"
-    payload = {"employee_code": employee_code, "password": password}
+@app.route("/login", methods=["POST"])
+def login():
+    """Employee login via APEX REST API"""
+    data = request.json
     try:
-        r = requests.post(url, json=payload, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json()["token"]
-    except requests.exceptions.Timeout:
-        raise RuntimeError("APEX server timed out")
+        token = apex_client.login_employee(data["employee_code"], data["password"])
+        return jsonify({"token": token})
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"APEX request failed: {e}")
-    except KeyError:
-        raise RuntimeError("APEX response missing token")
+        # Catch HTTP errors from APEX
+        return jsonify({"error": str(e)}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-def login_employee_qr(qr_code: str) -> str:
-    """Login via QR code; returns JWT token"""
-    url = f"{BASE_URL}/employee/login/qr"
-    payload = {"qr_code": qr_code}
+@app.route("/login/qr", methods=["POST"])
+def login_qr():
+    """Employee login via QR code"""
+    data = request.json
     try:
-        r = requests.post(url, json=payload, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json()["token"]
-    except requests.exceptions.Timeout:
-        raise RuntimeError("APEX server timed out")
+        token = apex_client.login_employee_qr(data["qr_code"])
+        return jsonify({"token": token})
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"APEX request failed: {e}")
-    except KeyError:
-        raise RuntimeError("APEX response missing token")
+        return jsonify({"error": str(e)}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-# -----------------------------
-# Bookings
-# -----------------------------
-def get_bookings() -> list:
-    url = f"{BASE_URL}/employee/bookings/active"
+@app.route("/bookings", methods=["GET"])
+def get_bookings():
+    """Fetch bookings via APEX REST API"""
     try:
-        r = requests.get(url, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json()
-    except requests.exceptions.Timeout:
-        raise RuntimeError("APEX server timed out")
+        bookings = apex_client.get_bookings()
+        return jsonify(bookings)
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"APEX request failed: {e}")
+        return jsonify({"error": str(e)}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-def checkout_booking(employee_id, equipment_id, quantity, due_date, admin_id, notes):
-    url = f"{BASE_URL}/admin/checkout"
-    payload = {
-        "employee_id": employee_id,
-        "equipment_id": equipment_id,
-        "quantity_booked": quantity,
-        "due_date": due_date,
-        "admin_id": admin_id,
-        "notes": notes
-    }
+@app.route("/checkout", methods=["POST"])
+def checkout_booking():
+    """Admin checkout booking via APEX REST API"""
+    data = request.json
     try:
-        r = requests.post(url, json=payload, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json()
-    except requests.exceptions.Timeout:
-        raise RuntimeError("APEX server timed out")
+        result = apex_client.checkout_booking(
+            data["employee_id"],
+            data["equipment_id"],
+            data["quantity"],
+            data["due_date"],
+            data["admin_id"],
+            data.get("notes", "")
+        )
+        return jsonify(result)
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"APEX request failed: {e}")
+        return jsonify({"error": str(e)}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-def checkin_booking(booking_id):
-    url = f"{BASE_URL}/employee/checkin"
-    payload = {"booking_id": booking_id}
+@app.route("/checkin", methods=["PUT"])
+def checkin_booking():
+    """Employee checkin booking via APEX REST API"""
+    data = request.json
     try:
-        r = requests.put(url, json=payload, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json()
-    except requests.exceptions.Timeout:
-        raise RuntimeError("APEX server timed out")
+        result = apex_client.checkin_booking(data["booking_id"])
+        return jsonify(result)
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"APEX request failed: {e}")
+        return jsonify({"error": str(e)}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-# -----------------------------
-# QR Code Generation
-# -----------------------------
-def save_qr_image(value: str, filename: str) -> str:
-    img = qrcode.make(value)
-    path = f"{filename}.png"
-    img.save(path)
-    return path
+# Optional health check
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
+
+if __name__ == "__main__":
+    # Render expects this to bind on 0.0.0.0:$PORT
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=True)
