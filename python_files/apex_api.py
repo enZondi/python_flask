@@ -1,105 +1,124 @@
 # python_files/apex_api.py
 
-import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from apex import (
-    login_employee,
-    login_employee_qr,
-    get_bookings,
-    checkout_booking,
-    checkin_booking,
-    save_qr_image
-)
+import os
+from datetime import datetime, timezone
+import qrcode
+import io
 
 app = Flask(__name__)
-CORS(app)  # allow requests from any origin
+CORS(app)
 
 # -----------------------------
-# In-memory session storage (for simplicity)
+# Mock Database / In-Memory Store
 # -----------------------------
-sessions = {}
+# Replace with real Oracle APEX calls in production
+EMPLOYEES = {
+    "EMP001": {"password": "mypassword", "employee_id": 1},
+    "EMP002": {"password": "password2", "employee_id": 2},
+}
+
+BOOKINGS = [
+    {
+        "booking_id": 1,
+        "equipment_id": 1,
+        "employee_id": 1,
+        "admin_id": 1,
+        "checkout_date": "2025-09-09T03:29:43.107157Z",
+        "due_date": "2025-09-16T03:29:43.107157Z",
+        "quantity_booked": 1,
+        "status": "CHECKED_OUT",
+        "notes": "For IoT sensor prototype development",
+        "qr_code": "BK-1-20250909032943",
+    },
+]
 
 # -----------------------------
-# ROUTES
+# Utility Functions
+# -----------------------------
+def generate_jwt(employee_id: int) -> str:
+    # Mock token for simplicity; replace with real JWT
+    return f"TOKEN-{employee_id}"
+
+def generate_qr_image(value: str) -> bytes:
+    img = qrcode.make(value)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.read()
+
+# -----------------------------
+# Routes
 # -----------------------------
 @app.route("/login", methods=["POST"])
-def password_login():
-    data = request.json
-    try:
-        token = login_employee(data["employee_code"], data["password"])
-        sessions[data["employee_code"]] = token
-        return jsonify({"token": token, "employee_code": data["employee_code"]})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+def login_employee():
+    data = request.get_json()
+    code = data.get("employee_code")
+    pw = data.get("password")
+    emp = EMPLOYEES.get(code)
+    if emp and emp["password"] == pw:
+        token = generate_jwt(emp["employee_id"])
+        return jsonify({"token": token}), 200
+    return jsonify({"error": "Invalid credentials"}), 401
 
 @app.route("/login/qr", methods=["POST"])
-def qr_login():
-    data = request.json
-    try:
-        token = login_employee_qr(data["qr_code"])
-        sessions[data["qr_code"]] = token
-        return jsonify({"token": token, "qr_code": data["qr_code"]})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+def login_employee_qr():
+    data = request.get_json()
+    qr_code = data.get("qr_code")
+    booking = next((b for b in BOOKINGS if b["qr_code"] == qr_code), None)
+    if booking:
+        token = generate_jwt(booking["employee_id"])
+        return jsonify({"token": token}), 200
+    return jsonify({"error": "Invalid QR code"}), 401
 
 @app.route("/bookings", methods=["GET"])
-def bookings():
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        return jsonify({"error": "Missing Authorization header"}), 401
-    try:
-        bookings_list = get_bookings()
-        return jsonify(bookings_list)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+def get_bookings():
+    # Ideally, use JWT to filter employee_id
+    employee_id = request.headers.get("X-Employee-ID")
+    if employee_id:
+        filtered = [b for b in BOOKINGS if str(b["employee_id"]) == str(employee_id)]
+        return jsonify(filtered)
+    return jsonify(BOOKINGS)
 
 @app.route("/checkout", methods=["POST"])
-def checkout():
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        return jsonify({"error": "Missing Authorization header"}), 401
-    data = request.json
-    try:
-        booking = checkout_booking(
-            employee_id=data["employee_id"],
-            equipment_id=data["equipment_id"],
-            quantity=data["quantity_booked"],
-            due_date=data["due_date"],
-            admin_id=data["admin_id"],
-            notes=data["notes"]
-        )
-        return jsonify(booking)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+def checkout_booking():
+    data = request.get_json()
+    new_booking = {
+        "booking_id": len(BOOKINGS) + 1,
+        "equipment_id": data["equipment_id"],
+        "employee_id": data["employee_id"],
+        "admin_id": data["admin_id"],
+        "checkout_date": datetime.now(timezone.utc).isoformat(),
+        "due_date": data["due_date"],
+        "quantity_booked": data["quantity_booked"],
+        "status": "CHECKED_OUT",
+        "notes": data.get("notes", ""),
+        "qr_code": f"BK-{len(BOOKINGS)+1}-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+    }
+    BOOKINGS.append(new_booking)
+    return jsonify(new_booking), 201
 
 @app.route("/checkin", methods=["PUT"])
-def checkin():
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        return jsonify({"error": "Missing Authorization header"}), 401
-    data = request.json
-    try:
-        booking_id = data["booking_id"]
-        result = checkin_booking(booking_id)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+def checkin_booking():
+    data = request.get_json()
+    booking_id = data.get("booking_id")
+    booking = next((b for b in BOOKINGS if b["booking_id"] == booking_id), None)
+    if booking:
+        booking["status"] = "RETURNED"
+        return jsonify(booking), 200
+    return jsonify({"error": "Booking not found"}), 404
 
 @app.route("/generate_qr", methods=["POST"])
 def generate_qr():
-    data = request.json
+    data = request.get_json()
     value = data.get("value")
-    filename = data.get("filename")
-    try:
-        path = save_qr_image(value, filename)
-        return jsonify({"path": path})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+    img_bytes = generate_qr_image(value)
+    return (img_bytes, 200, {"Content-Type": "image/png"})
 
 # -----------------------------
-# RUN SERVER
+# Main Entry
 # -----------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Use Render-assigned port
-    app.run(host="0.0.0.0", port=port, debug=True)
+    port = int(os.environ.get("PORT", 10000))  # Render provides PORT env
+    app.run(host="0.0.0.0", port=port)
