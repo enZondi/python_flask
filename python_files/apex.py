@@ -1,76 +1,31 @@
-# python_files/apex.py
-
 import requests
-import qrcode
-import io
-import base64
-from datetime import datetime, timezone
 
-# -----------------------------
-# Config: Oracle APEX REST endpoints
-# -----------------------------
-BASE_URL = "https://oracleapex.com/ords/mrelokusa"
+APEX_BASE_URL = "https://your-apex-server.com/ords/mrelokusa"  # replace with your actual APEX base URL
 
-# -----------------------------
-# Authentication
-# -----------------------------
 def login_employee(employee_code: str, password: str) -> str:
-    """Login with employee_code and password; returns JWT token"""
-    url = f"{BASE_URL}/employee/login"
-    payload = {"employee_code": employee_code, "password": password}
+    url = f"{APEX_BASE_URL}/employee/login"
+    payload = {"EMPLOYEE_CODE": employee_code, "PASSWORD": password}
     r = requests.post(url, json=payload)
     r.raise_for_status()
-    data = r.json()
-    return data["token"]
+    return r.json().get("token")
 
 def login_employee_qr(qr_code: str) -> str:
-    """Login via QR code; returns JWT token"""
-    url = f"{BASE_URL}/employee/login/qr"
-    payload = {"qr_code": qr_code}
+    url = f"{APEX_BASE_URL}/employee/qr_login"
+    payload = {"QR_CODE": qr_code}
     r = requests.post(url, json=payload)
     r.raise_for_status()
-    data = r.json()
-    return data["token"]
+    return r.json().get("token")
 
-# -----------------------------
-# Bookings
-# -----------------------------
-def get_bookings() -> list:
-    """Fetch bookings (filtered by employee in APEX)"""
-    url = f"{BASE_URL}/employee/bookings/active"
-    r = requests.get(url)
+def get_bookings(token: str):
+    url = f"{APEX_BASE_URL}/bookings"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(url, headers=headers)
     r.raise_for_status()
     return r.json()
 
-def checkout_booking(employee_id, equipment_id, quantity, due_date, admin_id, notes):
-    """Admin creates a new booking"""
-    url = f"{BASE_URL}/admin/checkout"
-    payload = {
-        "employee_id": employee_id,
-        "equipment_id": equipment_id,
-        "quantity_booked": quantity,
-        "due_date": due_date,
-        "admin_id": admin_id,
-        "notes": notes
-    }
-    r = requests.post(url, json=payload)
+def checkout_booking(token: str, booking_id: int):
+    url = f"{APEX_BASE_URL}/bookings/{booking_id}/checkout"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.post(url, headers=headers)
     r.raise_for_status()
     return r.json()
-
-def checkin_booking(booking_id):
-    """Employee checks in a booking"""
-    url = f"{BASE_URL}/employee/checkin"
-    payload = {"booking_id": booking_id}
-    r = requests.put(url, json=payload)
-    r.raise_for_status()
-    return r.json()
-
-# -----------------------------
-# QR Code Generation
-# -----------------------------
-def save_qr_image(value: str, filename: str) -> str:
-    """Generate QR code PNG and save locally"""
-    img = qrcode.make(value)
-    path = f"{filename}.png"
-    img.save(path)
-    return path
