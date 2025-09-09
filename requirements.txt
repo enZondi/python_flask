@@ -2,3 +2,4 @@ Flask
 requests
 qrcode
 flask-cors
+gunicorn
